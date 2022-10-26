@@ -1,3 +1,5 @@
+import clone from 'fast-clone';
+
 /**
  * First, we're gonna do a rough walk-through of a blog post.
  * Then, I'll refactor into a working parser for .properties files.
@@ -66,19 +68,79 @@ const sequence = <T>(parsers: Parser<T>[]): Parser<T[]> => {
   };
 };
 
+// Creates a Parser from Regex
+const regex = (re: RegExp, expected: string): Parser<string> => {
+  const syncRe = clone(re);
+  return (ctx) => {
+    syncRe.lastIndex = ctx.index;
+    const res = syncRe.exec(ctx.text);
+    if (res && res.index === ctx.index) {
+      return success({ ...ctx, index: ctx.index + res[0].length }, res[0]);
+    }
+    return failure(ctx, expected);
+  };
+};
+
 // The any combinator matches against the first successful Parser in an array
-const any = <T>(parsers: Parser<T>[]): Parser<T[]> => {
-
+const any = <T>(parsers: Parser<T>[]): Parser<T> => {
+  return (ctx) => {
+    let furthestRes: Result<T> | null = null;
+    for (let i = 0; i < parsers.length; i++) {
+      const res = parsers[i](ctx);
+      if (res.success) return res;
+      if (!furthestRes || furthestRes.ctx.index < res.ctx.index) {
+        furthestRes = res;
+      }
+    }
+    return furthestRes!;
+  };
 };
 
-// This one will match against repeated anys - can't fail, only returns []
-const many = <T>(parsers: Parser<T>[]): Parser<T[]> => {
-
+// This one will match against repetition of a Parser - can't fail, only returns []
+const many = <T>(parser: Parser<T>): Parser<T[]> => {
+  return (ctx) => {
+    const values: T[] = [];
+    let nextCtx = ctx;
+    while (nextCtx.index < nextCtx.text.length) {
+      const res = parser(nextCtx);
+      if (!res.success) break;
+      values.push(res.value);
+      nextCtx = res.ctx;
+    }
+    return success(nextCtx, values);
+  };
 };
 
-const Combinators = {
+// match a parser or succeed with null
+const optional = <T>(parser: Parser<T>): Parser<T | null> => {
+  const nullParser: Parser<null> = (ctx) => { return success(ctx, null); };
+  return any([parser, nullParser]);
+};
+
+// method for mapping a Success to a callback, useful for ASTs
+const map = <A, B>(parser: Parser<A>, fn: (val: A) => B): Parser<B> => {
+  return (ctx) => {
+    const res = parser(ctx);
+    return res.success ? success(res.ctx, fn(res.value)) : (res as Failure);
+  };
+};
+
+export const Combinators = {
+  any,
+  many,
+  map,
+  optional,
+  regex,
   str,
   sequence,
 };
+
+// Implementing our mini-language
+type Expr = Call | number;
+
+interface Call {
+  targets: string;
+  args: Expr[];
+}
 
 export default Combinators;

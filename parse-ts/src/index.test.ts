@@ -1,4 +1,4 @@
-import Combinators from '.';
+import { Combinators } from '.';
 
 const {
   sequence,
